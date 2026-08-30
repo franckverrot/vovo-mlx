@@ -8,8 +8,28 @@ Vovo was written in Swift with hand-written Metal kernels.  The entirety of the 
 
 This repository is the Python port of the *inference* path so the weights can be used from Python: it reproduces the Swift implementation numerically.
 
+## Install
+
+Apple silicon + Python ≥ 3.10. Pick one:
+
 ```
-pip install vovo-mlx
+pip install vovo-mlx                                        # from PyPI
+pip install git+https://github.com/franckverrot/vovo-mlx    # straight from GitHub (latest main)
+```
+
+For development (editable install with the test dependencies):
+
+```
+git clone git@github.com:franckverrot/vovo-mlx.git && cd vovo-mlx
+pip install -e ".[dev]"       # or: uv venv && uv pip install -e ".[dev]"
+pytest
+```
+
+The weights are downloaded from the Hub on first use and cached by `huggingface_hub` (~135 MB).
+
+## Use
+
+```
 vovo-mlx say "The quick brown fox jumps over the lazy dog." -o fox.wav --play
 ```
 
