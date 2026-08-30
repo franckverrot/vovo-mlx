@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 
 import gradio as gr
@@ -13,6 +14,10 @@ from vovo_mlx import SAMPLE_RATE, VovoTTS, __version__
 MODEL_REPO = "franckverrot/vovo"
 tts = VovoTTS.from_pretrained(MODEL_REPO)
 tts.say("Warming up.", steps=2)  # first call compiles the graphs; do it before the first visitor
+if os.environ.get("VOVO_PROFILE", "1") == "1":
+    import space_profile as _profile  # noqa: E402  (timings into the Space logs)
+
+    _profile.run(tts)
 
 EXAMPLES = [
     ["The quick brown fox jumps over the lazy dog."],
