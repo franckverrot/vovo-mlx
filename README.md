@@ -4,9 +4,9 @@ Vovo is an English-only TTS model built from scratch.  This repository is the Py
 
 You will find weights on [HuggingFace](https://huggingface.co/franckverrot/vovo).
 
-Vovo was written in Swift with hand-written Metal kernels.  The entirety of the training toolchain is home-made: the tensor engine is new, autograd/optimizer/etc are also custom, and the broader data pipeline and trainer as well.  The result is a compact 20M parameters voice model that was trained in about 13 minutes on an M2 Max with 96B of RAM (the training consumed way less than that).
+Vovo was written in Swift with hand-written Metal kernels.  The entirety of the training toolchain is home-made: the tensor engine is new, autograd/optimizer/etc are also custom, and the broader data pipeline and trainer as well.  The result is a compact 20M parameters voice model that was trained in about 13 minutes on an M2 Max with 96GB of RAM (the training consumed way less than that).
 
-This repository is the Python port of the *inference* path so the weights can be used from Python: it reproduces the Swift implementation numerically (see [Parity](#parity)).
+This repository is the Python port of the *inference* path so the weights can be used from Python: it reproduces the Swift implementation numerically.
 
 ```
 pip install vovo-mlx
@@ -53,13 +53,13 @@ Lower-level access: `tts.synthesize(text, **knobs)` returns the log-mel (`.mel`)
 (24 kHz, n_fft 1024, hop 256, HTK mel scale, `log(clamp(x, 1e-7))`) into a waveform; `tts.phonemize(text)`
 shows the phones the model will see.
 
+
 ## Examples
 
-- `[examples/say.py](examples/say.py)` — the two-line version.
-- `[examples/batch.py](examples/batch.py)` — a text file to numbered WAVs, with the knobs commented.
-- `[examples/inspect_mel.py](examples/inspect_mel.py)` — plot the prior μ next to the decoded mel.
-- `vovo-mlx phones "Dr. Smith paid $12.50 at 4:05."` — see the normalization and phonemization.
-
+- [examples/say.py](examples/say.py): two-line example.
+- [examples/batch.py](examples/batch.py): text file to numbered WAVs with some options
+- [examples/inspect_mel.py](examples/inspect_mel.py): plot prior μ next to the decoded mel
+- `vovo-mlx phones "Dr. Smith paid $12.50 at 4:05."`: see the normalization and phonemization
 
 
 ## Weights
