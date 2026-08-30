@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-DEFAULT_REPO = "franckverrot/vovo-ljspeech"
+DEFAULT_REPO = "franckverrot/vovo"
 MODEL_FILE = "model.safetensors"
 VOCODER_FILE = "vocoder.safetensors"
 

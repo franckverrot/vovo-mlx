@@ -31,7 +31,7 @@ vovo-mlx = "vovo_mlx.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/franckverrot/vovo-mlx"
-Weights = "https://huggingface.co/franckverrot/vovo-ljspeech"
+Weights = "https://huggingface.co/franckverrot/vovo"
 
 [tool.hatch.build.targets.wheel]
 packages = ["vovo_mlx"]
