@@ -1,0 +1,12 @@
+# Pronunciation overrides consulted before the lexicon. One entry per line: word<TAB>/ipa/
+# IPA in the ipa-dict conventions (single-codepoint symbols, ˈ primary stress, ɫ for /l/).
+vovo	/ˈvoʊvoʊ/
+franck	/ˈfɹæŋk/
+kokoro	/koʊˈkoʊɹoʊ/
+metal	/ˈmɛtəɫ/
+ljspeech	/ˌɛɫˈdʒeɪˈspitʃ/
+matcha	/ˈmɑtʃə/
+vocos	/ˈvoʊkoʊs/
+mlx	/ˌɛmˌɛɫˈɛks/
+gpu	/ˌdʒiˌpiˈju/
+tts	/ˌtiˌtiˈɛs/
