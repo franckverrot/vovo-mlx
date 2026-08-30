@@ -1,0 +1,2 @@
+vovo-mlx @ git+https://github.com/franckverrot/vovo-mlx
+gradio>=5.0
