@@ -37,7 +37,24 @@ def main(argv: list[str] | None = None) -> int:
     g = sub.add_parser("phones", help="Show normalization and phonemization of text.")
     g.add_argument("text")
 
+    sp = sub.add_parser("ssml", help="Show how SSML markup becomes spans and phones.")
+    sp.add_argument("markup")
+
     args = p.parse_args(argv)
+    if args.command == "ssml":
+        from .model import plan_ssml
+        from .text import ssml as ssml_mod
+
+        phones, control, spans = plan_ssml(args.markup, G2P())
+        for span in spans:
+            if isinstance(span, ssml_mod.Pause):
+                print(f"pause {span.milliseconds} ms")
+            else:
+                c = span.control
+                print(f"text  {span.text}  (pitch {c.pitch_shift:+.1f} st, scale {c.pitch_scale:.2f}, "
+                      f"volume {c.energy_shift:+.1f} dB, rate {c.speed:.2f})")
+        print(f"phones: {len(phones)}")
+        return 0
     if args.command == "phones":
         print("normalized:", normalize(args.text))
         toks = G2P().phonemize(args.text)

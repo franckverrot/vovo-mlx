@@ -12,7 +12,7 @@ import mlx.core as mx
 
 from . import hub
 from .config import ModelConfig, VocosConfig
-from .model import Synthesis, VovoModel, load_checkpoint
+from .model import PhoneControl, Synthesis, VovoModel, load_checkpoint, plan_ssml
 from .text import G2P
 from .vocos import Vocos, load_vocos
 
@@ -45,7 +45,13 @@ class VovoTTS:
         return self.g2p.phonemize(text)
 
     def synthesize(self, text: str, **kwargs) -> Synthesis:
-        """Text → log-mel (see `VovoModel.synthesize` for the sampler arguments)."""
+        """Text → log-mel. SSML markup (`<speak>`, `<prosody>`, `<emphasis>`, `<break>`) is detected and
+        parsed automatically; see `VovoModel.synthesize` for the sampler arguments."""
+        from .text import ssml as ssml_mod
+
+        if ssml_mod.looks_like_markup(text):
+            phones, control, _ = plan_ssml(text, self.g2p)
+            return self.model.synthesize(phones, control=control, **kwargs)
         return self.model.synthesize(self.g2p.encode(text), **kwargs)
 
     def vocode(self, log_mel: mx.array) -> np.ndarray:
@@ -57,7 +63,8 @@ class VovoTTS:
             speed: float = 1.0, sway: float = 0.0, midpoint: bool = False, seed: int | None = None,
             pitch_shift: float = 0.0, pitch_scale: float = 1.0, energy_shift: float = 0.0) -> np.ndarray:
         """Text → float32 waveform at 24 kHz. With a variance-adaptor model, `pitch_shift` (semitones),
-        `pitch_scale` (contour variance) and `energy_shift` (dB) reshape the prosody."""
+        `pitch_scale` (contour variance) and `energy_shift` (dB) reshape the prosody; SSML markup in `text`
+        (`<prosody>`, `<emphasis>`, `<break>`) steers it per span and composes with these knobs."""
         if seed is not None:
             mx.random.seed(seed)
         s = self.synthesize(text, steps=steps, guidance=guidance, temperature=temperature, speed=speed, sway=sway, midpoint=midpoint,
@@ -65,4 +72,4 @@ class VovoTTS:
         return self.vocode(s.mel)
 
 
-__all__ = ["VovoTTS", "VovoModel", "Vocos", "Synthesis", "ModelConfig", "VocosConfig", "G2P", "load_checkpoint", "load_vocos", "SAMPLE_RATE", "__version__"]
+__all__ = ["VovoTTS", "VovoModel", "Vocos", "Synthesis", "PhoneControl", "plan_ssml", "ModelConfig", "VocosConfig", "G2P", "load_checkpoint", "load_vocos", "SAMPLE_RATE", "__version__"]

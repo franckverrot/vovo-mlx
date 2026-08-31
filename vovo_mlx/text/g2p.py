@@ -55,6 +55,21 @@ class G2P:
     def encode(self, text: str, normalize_text: bool = True) -> list[int]:
         return phones.encode(self.phonemize(text, normalize_text))
 
+    def punctuation_only(self, text: str) -> list[str]:
+        """Punctuation tokens for a fragment with no words — `phonemize` drops leading punctuation, but an
+        SSML span can be a mark on its own and that mark still carries a pause."""
+        out: list[str] = []
+        for ch in text:
+            p = PUNCTUATION_MAP.get(ch)
+            if p is None:
+                continue
+            if out:
+                if out[-1] == ",":
+                    out[-1] = p
+            else:
+                out.append(p)
+        return out
+
     def pronounce(self, raw: str) -> list[str]:
         """Phones for one word (letters, digits and apostrophes only)."""
         lex = self.lexicon

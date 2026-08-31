@@ -220,6 +220,17 @@ def _upsample2(x: mx.array, T: int) -> mx.array:
 # --- the model ---------------------------------------------------------------------------------------
 
 @dataclass
+class PhoneControl:
+    """Per-phone synthesis control (what SSML tags steer). `duration_frames` overrides the predicted
+    duration outright, which is how `<break time="…"/>` gets its exact length."""
+    pitch_shift: float = 0.0
+    pitch_scale: float = 1.0
+    energy_shift: float = 0.0
+    speed: float = 1.0
+    duration_frames: int | None = None
+
+
+@dataclass
 class Synthesis:
     mel: mx.array          # [T, nMels] decoded log-mel
     prior: mx.array        # [T, nMels] μ upsampled (the encoder's blurry estimate)
@@ -249,7 +260,7 @@ class VovoModel(nn.Module):
     def synthesize(self, phones: list[int], *, speaker: int = 0, steps: int = 16, guidance: float = 2.0,
                    temperature: float = 0.667, speed: float = 1.0, sway: float = 0.0, midpoint: bool = False,
                    noise: mx.array | None = None, pitch_shift: float = 0.0, pitch_scale: float = 1.0,
-                   energy_shift: float = 0.0) -> Synthesis:
+                   energy_shift: float = 0.0, control: list["PhoneControl"] | None = None) -> Synthesis:
         """Phone ids → log-mel. `guidance` is classifier-free guidance (1 = off); `speed` > 1 talks faster."""
         cfg = self.cfg
         ph = mx.array(phones, dtype=mx.int32)[None]
@@ -260,16 +271,33 @@ class VovoModel(nn.Module):
             f0_std = max(cfg.f0Std[speaker], 1e-3) if speaker < len(cfg.f0Std) else 1.0
             e_std = max(cfg.energyStd[speaker], 1e-3) if speaker < len(cfg.energyStd) else 1.0
             p, e = pitch_pred, energy_pred
-            if pitch_scale != 1:
-                mean = p.mean()
-                p = mean + (p - mean) * pitch_scale
-            if pitch_shift != 0:
-                p = p + pitch_shift * math.log(2) / 12 / f0_std
-            if energy_shift != 0:
-                e = e + energy_shift * math.log(10) / 20 / e_std
+            mean = p.mean()
+            st, db = math.log(2) / 12 / f0_std, math.log(10) / 20 / e_std
+            if control:
+                # Per-phone: the scalar knobs compose with each span's values.
+                scales = mx.array([pitch_scale * c.pitch_scale for c in control])[None]
+                shifts = mx.array([(pitch_shift + c.pitch_shift) * st for c in control])[None]
+                energies = mx.array([(energy_shift + c.energy_shift) * db for c in control])[None]
+                p = mean + (p - mean) * scales + shifts
+                e = e + energies
+            else:
+                if pitch_scale != 1:
+                    p = mean + (p - mean) * pitch_scale
+                if pitch_shift != 0:
+                    p = p + pitch_shift * st
+                if energy_shift != 0:
+                    e = e + energy_shift * db
             pitch_out, energy_out = p[0], e[0]
             mu = self.encoder.prosody_embed(mu, p, e)
-        w = [max(1, math.ceil(math.exp(float(v)) / speed)) for v in logw[0].tolist()]
+        if control is not None and len(control) != len(phones):
+            raise ValueError("control must have one entry per phone")
+        w = []
+        for i, v in enumerate(logw[0].tolist()):
+            c = control[i] if control else None
+            if c is not None and c.duration_frames is not None:
+                w.append(max(1, c.duration_frames))
+            else:
+                w.append(max(1, math.ceil(math.exp(float(v)) / (speed * (c.speed if c else 1.0)))))
         T = sum(w)
         idx = mx.array([n for n, count in enumerate(w) for _ in range(count)], dtype=mx.int32)
         mu_up = mu[:, idx, :]                                     # [1, T, nMels]
@@ -324,3 +352,39 @@ def load_checkpoint(path: str, prefer_ema: bool = True) -> VovoModel:
 def _load_safetensors(path: str) -> tuple[dict[str, mx.array], dict[str, str]]:
     tensors, meta = mx.load(path, return_metadata=True)
     return tensors, meta
+
+
+def plan_ssml(markup: str, g2p, frame_rate: float = 93.75) -> tuple[list[int], list[PhoneControl], list]:
+    """SSML → (phone ids, per-phone control, spans). Each span is phonemized on its own so its prosody
+    applies to exactly the phones it produced; a `<break>` becomes the pause token the model was trained
+    on, with its duration pinned. Mirrors `VovoTTS.plan(ssml:g2p:)` in Swift."""
+    from .text import ssml as ssml_mod
+    from .text.phones import ID_OF, encode
+
+    spans = ssml_mod.parse(markup)
+    punctuation_ids = {ID_OF[p] for p in ssml_mod.PUNCTUATION if p in ID_OF}
+    phones: list[int] = []
+    control: list[PhoneControl] = []
+    for span in spans:
+        if isinstance(span, ssml_mod.Pause):
+            if span.milliseconds <= 0:
+                continue
+            frames = max(1, round(span.milliseconds / 1000 * frame_rate))
+            if phones and phones[-1] in punctuation_ids:
+                control[-1].duration_frames = frames
+            else:
+                phones.append(ID_OF[","])
+                control.append(PhoneControl(duration_frames=frames))
+            continue
+        tokens = g2p.phonemize(span.text) or g2p.punctuation_only(span.text)
+        if not tokens:
+            continue
+        starts_with_punctuation = tokens[0] in ssml_mod.PUNCTUATION
+        if phones and not starts_with_punctuation and phones[-1] != ID_OF[" "] and tokens[0] != " ":
+            phones.append(ID_OF[" "])
+            control.append(PhoneControl())
+        ids = encode(tokens)
+        phones += ids
+        control += [PhoneControl(span.control.pitch_shift, span.control.pitch_scale,
+                                 span.control.energy_shift, span.control.speed) for _ in ids]
+    return phones, control, spans
