@@ -107,9 +107,23 @@ class TextEncoder(nn.Module):
         self.durConvs = [Conv1d(cfg.encDim, cfg.durHidden, cfg.durKernel), Conv1d(cfg.durHidden, cfg.durHidden, cfg.durKernel)]
         self.durNorms = [LayerNorm(cfg.durHidden), LayerNorm(cfg.durHidden)]
         self.durOut = Linear(cfg.durHidden, 1)
+        if cfg.varianceAdaptor:
+            self.pitchConvs = [Conv1d(cfg.encDim, cfg.durHidden, cfg.durKernel), Conv1d(cfg.durHidden, cfg.durHidden, cfg.durKernel)]
+            self.pitchNorms = [LayerNorm(cfg.durHidden), LayerNorm(cfg.durHidden)]
+            self.pitchOut = Linear(cfg.durHidden, 1)
+            self.pitchEmb = Linear(1, cfg.nMels)
+            self.energyConvs = [Conv1d(cfg.encDim, cfg.durHidden, cfg.durKernel), Conv1d(cfg.durHidden, cfg.durHidden, cfg.durKernel)]
+            self.energyNorms = [LayerNorm(cfg.durHidden), LayerNorm(cfg.durHidden)]
+            self.energyOut = Linear(cfg.durHidden, 1)
+            self.energyEmb = Linear(1, cfg.nMels)
 
-    def __call__(self, phones: mx.array, spk: mx.array) -> tuple[mx.array, mx.array]:
-        """phones [B, N] int32, spk [B, spkDim] → (μ [B, N, nMels], log-durations [B, N])."""
+    def prosody_embed(self, mu: mx.array, pitch: mx.array, energy: mx.array) -> mx.array:
+        """μ + embeddings of the per-phone pitch/energy values (normalized units), [B, N]."""
+        return mu + self.pitchEmb(pitch[..., None]) + self.energyEmb(energy[..., None])
+
+    def __call__(self, phones: mx.array, spk: mx.array) -> tuple[mx.array, mx.array, mx.array | None, mx.array | None]:
+        """phones [B, N] int32, spk [B, spkDim] → (μ, log-durations, pitch, energy); the last two are
+        None without the variance adaptor."""
         x = self.emb(phones) * math.sqrt(self.cfg.encDim) + self.spkProj(spk)[:, None, :]
         h = x
         for conv, norm in zip(self.prenetConvs, self.prenetNorms):
@@ -123,7 +137,16 @@ class TextEncoder(nn.Module):
         for conv, norm in zip(self.durConvs, self.durNorms):
             d = norm(nn.relu(conv(d)))
         logw = self.durOut(d)[..., 0]
-        return mu, logw
+        if not self.cfg.varianceAdaptor:
+            return mu, logw, None, None
+
+        def predict(convs, norms, out):
+            v = x
+            for conv, norm in zip(convs, norms):
+                v = norm(nn.relu(conv(v)))
+            return out(v)[..., 0]
+
+        return mu, logw, predict(self.pitchConvs, self.pitchNorms, self.pitchOut), predict(self.energyConvs, self.energyNorms, self.energyOut)
 
 
 # --- decoder ----------------------------------------------------------------------------------------
@@ -202,6 +225,8 @@ class Synthesis:
     prior: mx.array        # [T, nMels] μ upsampled (the encoder's blurry estimate)
     durations: list[int]   # frames per phone
     x0: mx.array           # the noise the ODE started from
+    pitch: mx.array = None      # [N] per-phone pitch after the knobs (variance adaptor)
+    energy: mx.array = None     # [N] per-phone energy after the knobs
 
 
 def time_grid(steps: int, sway: float) -> list[float]:
@@ -223,12 +248,27 @@ class VovoModel(nn.Module):
 
     def synthesize(self, phones: list[int], *, speaker: int = 0, steps: int = 16, guidance: float = 2.0,
                    temperature: float = 0.667, speed: float = 1.0, sway: float = 0.0, midpoint: bool = False,
-                   noise: mx.array | None = None) -> Synthesis:
+                   noise: mx.array | None = None, pitch_shift: float = 0.0, pitch_scale: float = 1.0,
+                   energy_shift: float = 0.0) -> Synthesis:
         """Phone ids → log-mel. `guidance` is classifier-free guidance (1 = off); `speed` > 1 talks faster."""
         cfg = self.cfg
         ph = mx.array(phones, dtype=mx.int32)[None]
         spk = self.spkEmb(mx.array([speaker], dtype=mx.int32))
-        mu, logw = self.encoder(ph, spk)
+        mu, logw, pitch_pred, energy_pred = self.encoder(ph, spk)
+        pitch_out, energy_out = mx.array([]), mx.array([])
+        if cfg.varianceAdaptor and pitch_pred is not None:
+            f0_std = max(cfg.f0Std[speaker], 1e-3) if speaker < len(cfg.f0Std) else 1.0
+            e_std = max(cfg.energyStd[speaker], 1e-3) if speaker < len(cfg.energyStd) else 1.0
+            p, e = pitch_pred, energy_pred
+            if pitch_scale != 1:
+                mean = p.mean()
+                p = mean + (p - mean) * pitch_scale
+            if pitch_shift != 0:
+                p = p + pitch_shift * math.log(2) / 12 / f0_std
+            if energy_shift != 0:
+                e = e + energy_shift * math.log(10) / 20 / e_std
+            pitch_out, energy_out = p[0], e[0]
+            mu = self.encoder.prosody_embed(mu, p, e)
         w = [max(1, math.ceil(math.exp(float(v)) / speed)) for v in logw[0].tolist()]
         T = sum(w)
         idx = mx.array([n for n, count in enumerate(w) for _ in range(count)], dtype=mx.int32)
@@ -255,7 +295,7 @@ class VovoModel(nn.Module):
                 x = x + v * dt
         mel = mx.maximum(x[0], MEL_FLOOR)
         mx.eval(mel)
-        return Synthesis(mel=mel, prior=mx.maximum(mu_up[0], MEL_FLOOR), durations=w, x0=x0)
+        return Synthesis(mel=mel, prior=mx.maximum(mu_up[0], MEL_FLOOR), durations=w, x0=x0, pitch=pitch_out, energy=energy_out)
 
 
 # --- checkpoint loading -----------------------------------------------------------------------------
@@ -272,7 +312,7 @@ def load_checkpoint(path: str, prefer_ema: bool = True) -> VovoModel:
                 weights[k[4:]] = v
     converted = []
     for name, value in weights.items():
-        if ".prenetConvs." in name or ".durConvs." in name:
+        if ".prenetConvs." in name or ".durConvs." in name or ".pitchConvs." in name or ".energyConvs." in name:
             if name.endswith(".weight"):
                 value = value.transpose(2, 0, 1)                  # [K, Cin, Cout] → [Cout, K, Cin]
         converted.append((name, value))

@@ -33,8 +33,13 @@ def test_mel_and_wav_match_swift(tts, dump):
     assert tts.g2p.encode(meta["text"]) == phones, "text front-end disagrees with Swift"
     s = tts.model.synthesize(phones, steps=int(meta["steps"]), guidance=float(meta["guidance"]),
                              temperature=float(meta["temperature"]), sway=float(meta["sway"]),
-                             midpoint=meta["midpoint"] == "true", speed=float(meta["speed"]), noise=t["x0"])
+                             midpoint=meta["midpoint"] == "true", speed=float(meta["speed"]), noise=t["x0"],
+                             pitch_shift=float(meta.get("pitchShift", 0)), pitch_scale=float(meta.get("pitchScale", 1)),
+                             energy_shift=float(meta.get("energyShift", 0)))
     assert s.durations == [int(v) for v in t["durations"].tolist()], "durations differ"
+    if "pitch" in t and s.pitch is not None and s.pitch.size == t["pitch"].size and t["pitch"].size > 1:
+        assert float(mx.abs(s.pitch - t["pitch"]).max()) < 1e-4, "per-phone pitch differs from Swift"
+        assert float(mx.abs(s.energy - t["energy"]).max()) < 1e-4, "per-phone energy differs from Swift"
     prior_err = float(mx.abs(s.prior - t["mu_up"]).max())
     mel_err = float(mx.abs(s.mel - t["mel"]).max())
     assert prior_err < 1e-4, f"prior μ max abs diff {prior_err}"

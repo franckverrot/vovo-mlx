@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 
 
 @dataclass
@@ -24,6 +24,11 @@ class ModelConfig:
     spkDim: int = 64
     decDownFrom: int = 0
     decDownTo: int = 0
+    varianceAdaptor: bool = False
+    f0Mean: list[float] = field(default_factory=list)
+    f0Std: list[float] = field(default_factory=list)
+    energyMean: list[float] = field(default_factory=list)
+    energyStd: list[float] = field(default_factory=list)
 
     @classmethod
     def from_json(cls, text: str) -> "ModelConfig":

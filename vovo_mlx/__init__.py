@@ -54,11 +54,14 @@ class VovoTTS:
         return np.array(wav, dtype=np.float32)
 
     def say(self, text: str, *, steps: int = 16, guidance: float = 2.0, temperature: float = 0.667,
-            speed: float = 1.0, sway: float = 0.0, midpoint: bool = False, seed: int | None = None) -> np.ndarray:
-        """Text → float32 waveform at 24 kHz."""
+            speed: float = 1.0, sway: float = 0.0, midpoint: bool = False, seed: int | None = None,
+            pitch_shift: float = 0.0, pitch_scale: float = 1.0, energy_shift: float = 0.0) -> np.ndarray:
+        """Text → float32 waveform at 24 kHz. With a variance-adaptor model, `pitch_shift` (semitones),
+        `pitch_scale` (contour variance) and `energy_shift` (dB) reshape the prosody."""
         if seed is not None:
             mx.random.seed(seed)
-        s = self.synthesize(text, steps=steps, guidance=guidance, temperature=temperature, speed=speed, sway=sway, midpoint=midpoint)
+        s = self.synthesize(text, steps=steps, guidance=guidance, temperature=temperature, speed=speed, sway=sway, midpoint=midpoint,
+                            pitch_shift=pitch_shift, pitch_scale=pitch_scale, energy_shift=energy_shift)
         return self.vocode(s.mel)
 
 

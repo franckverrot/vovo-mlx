@@ -29,6 +29,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--sway", type=float, default=0.0)
     s.add_argument("--midpoint", action="store_true")
     s.add_argument("--seed", type=int)
+    s.add_argument("--pitch-shift", type=float, default=0.0, help="semitones (variance-adaptor models)")
+    s.add_argument("--pitch-scale", type=float, default=1.0, help="contour variance about the utterance mean")
+    s.add_argument("--energy-shift", type=float, default=0.0, help="dB")
     s.add_argument("--play", action="store_true", help="Play with afplay when done.")
 
     g = sub.add_parser("phones", help="Show normalization and phonemization of text.")
@@ -45,7 +48,8 @@ def main(argv: list[str] | None = None) -> int:
     tts = VovoTTS.from_pretrained(args.repo, model_file=args.model_file, vocoder_file=args.vocoder_file)
     t1 = time.time()
     wav = tts.say(args.text, steps=args.steps, guidance=args.guidance, temperature=args.temperature,
-                  speed=args.speed, sway=args.sway, midpoint=args.midpoint, seed=args.seed)
+                  speed=args.speed, sway=args.sway, midpoint=args.midpoint, seed=args.seed,
+                  pitch_shift=args.pitch_shift, pitch_scale=args.pitch_scale, energy_shift=args.energy_shift)
     t2 = time.time()
     write_wav(args.out, wav, SAMPLE_RATE)
     secs = len(wav) / SAMPLE_RATE
