@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vovo-mlx"
-version = "0.1.0"
+version = "0.2.0"
 description = "Inference for Vovo, a from-scratch English text-to-speech model, on Apple silicon with MLX."
 readme = "README.md"
 license = { text = "MIT" }

@@ -16,7 +16,7 @@ from .model import PhoneControl, Synthesis, VovoModel, load_checkpoint, plan_ssm
 from .text import G2P
 from .vocos import Vocos, load_vocos
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 SAMPLE_RATE = 24000
 
 
