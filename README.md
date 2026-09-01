@@ -47,7 +47,8 @@ write_wav("hello.wav", wav, SAMPLE_RATE)
 ## What's in the box
 
 - **Text front-end**: English normalizer, rule-based fallbacks for out-of-vocabulary words, and Vovo's fixed 67-symbol phone inventory
-- **Acoustic model** (20M)
+- **Acoustic model** (~21M). Vovo1.5 and later carry a **variance adaptor**: pitch and energy are
+  predicted per phone, which is what the prosody controls below steer
 - **Vocoder**: [Vocos](https://github.com/gemelo-ai/vocos) mel-24kHz, fine-tuned by Vovo on its own predicted mels
 - Outputs 24 kHz mono.
 
@@ -55,7 +56,7 @@ write_wav("hello.wav", wav, SAMPLE_RATE)
 
 ## Sampler knobs
 
-`tts.say(text, steps=16, guidance=2.0, temperature=0.667, speed=1.0, sway=0.0, midpoint=False, seed=None)`
+`tts.say(text, steps=16, guidance=2.0, temperature=0.667, speed=1.0, sway=0.0, midpoint=False, seed=None, pitch_shift=0.0, pitch_scale=1.0, energy_shift=0.0)`
 
 
 | argument      | what it does                                                                                          |
@@ -66,12 +67,50 @@ write_wav("hello.wav", wav, SAMPLE_RATE)
 | `speed`       | > 1 talks faster (durations divided by `speed`)                                                       |
 | `sway`        | < 0 packs ODE steps near t = 0 where the flow bends most (try −1)                                     |
 | `midpoint`    | 2nd-order solver (two velocity evaluations per step)                                                  |
+| `pitch_shift` | semitones up or down, whole utterance (variance-adaptor models only)                                  |
+| `pitch_scale` | scales the contour's variance about its mean: < 1 flatter, > 1 more animated                          |
+| `energy_shift` | vocal effort in dB — the voice pushes or eases, which is not the same as volume                      |
 
 
 Lower-level access: `tts.synthesize(text, **knobs)` returns the log-mel (`.mel`), the encoder prior
 (`.prior`), the per-phone durations and the starting noise; `tts.vocode(mel)` turns any `[T, 100]` log-mel
 (24 kHz, n_fft 1024, hop 256, HTK mel scale, `log(clamp(x, 1e-7))`) into a waveform; `tts.phonemize(text)`
 shows the phones the model will see.
+
+
+## Prosody and SSML
+
+Two ways to control delivery, and they compose.
+
+**Scalar knobs** apply to the whole utterance — `pitch_shift`, `pitch_scale` and `energy_shift` from the
+table above, on `tts.say()` and on the CLI:
+
+```
+vovo-mlx say "We shipped it." --pitch-shift 2 --pitch-scale 1.4 --energy-shift 3 -o excited.wav
+```
+
+**SSML** steers individual words. Markup is detected automatically, so it is just text you pass in:
+
+```python
+tts.say('<speak>I said <emphasis level="strong">red</emphasis>,'
+        '<break time="700ms"/>not <prosody pitch="+4st">blue</prosody>.</speak>')
+```
+
+| tag | what it does |
+| --- | --- |
+| `<prosody pitch="+4st">` | shift a span, in semitones or `high`/`low`/`+10%` |
+| `<prosody range="1.8">` | scale the contour's variance for that span |
+| `<prosody rate="1.15">`, `<prosody volume="-4dB">` | speed and vocal effort for that span |
+| `<emphasis level="strong">` | a preset of pitch, energy and rate (`moderate`, `reduced` too) |
+| `<break time="700ms"/>` | a pause of an exact length — a real pause token with its duration pinned |
+| `<p>`, `<s>` | paragraph and sentence pauses (500 ms / 250 ms) |
+| `<sub alias="November third">Nov 3</sub>` | say something other than what is written |
+
+To see what markup will do *before* rendering it, `plan_ssml` returns the phones, the per-phone control and
+the spans — `examples/ssml.py` prints all three, and the CLI has `vovo-mlx ssml '<speak>…</speak>'`.
+
+The pitch and emphasis controls need a checkpoint **with the variance adaptor**; without one they are
+ignored (`<break>`, `<sub>` and `rate` still work). Check with `tts.config.varianceAdaptor`.
 
 
 ## Examples
