@@ -76,10 +76,19 @@ shows the phones the model will see.
 
 ## Examples
 
-- [examples/say.py](examples/say.py): two-line example.
+- [examples/say.py](examples/say.py): two lines, text to WAV
+- [examples/prosody.py](examples/prosody.py): every scalar knob, one at a time — the same sentence higher,
+  lower, flatter, livelier, louder, softer, faster, slower, from a fixed seed so only the knob differs
+- [examples/ssml.py](examples/ssml.py): markup that steers prosody per word, and how to *inspect the plan*
+  (which phones each span produced, what control landed on them) before synthesizing
 - [examples/batch.py](examples/batch.py): text file to numbered WAVs with some options
 - [examples/inspect_mel.py](examples/inspect_mel.py): plot prior μ next to the decoded mel
 - `vovo-mlx phones "Dr. Smith paid $12.50 at 4:05."`: see the normalization and phonemization
+
+The prosody and SSML examples need a checkpoint **with the variance adaptor** (Vovo1.5 and later) — pitch
+and energy are predicted per phone there, and the knobs move those predictions. On a checkpoint without it
+the knobs are ignored and both scripts say so up front rather than leaving you guessing. Point them at a
+local export with `VOVO_WEIGHTS=/path/to/dir python examples/prosody.py`.
 
 
 ## Weights
