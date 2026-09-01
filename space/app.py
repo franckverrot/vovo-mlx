@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import time
 
@@ -21,6 +22,21 @@ if os.environ.get("VOVO_PROFILE", "1") == "1":
 
     _profile.run(tts)
 
+def voice_choices() -> list[tuple[str, str]]:
+    """(label, value) for the dropdown — the name alone means nothing, the pitch makes it browsable."""
+    names = tts.voices
+    if not names:
+        return []
+    out = []
+    for i, n in enumerate(names):
+        hz = math.exp(tts.config.f0Mean[i]) if i < len(tts.config.f0Mean) else 0
+        label = f"{n} · {hz:.0f} Hz" if hz else n
+        out.append((label if n != "ljspeech" else f"{label}  (the original voice)", n))
+    return out
+
+
+VOICES = voice_choices()
+
 EXAMPLES = [
     ["The quick brown fox jumps over the lazy dog."],
     ["Printing, in the only sense with which we are at present concerned, differs from most if not from all the arts and crafts represented in the exhibition."],
@@ -34,7 +50,8 @@ EXAMPLES = [
 
 
 def synthesize(text: str, steps: int, guidance: float, temperature: float, speed: float, seed: int, sway: float,
-               midpoint: bool, pitch_shift: float = 0.0, pitch_scale: float = 1.0, energy_shift: float = 0.0):
+               midpoint: bool, pitch_shift: float = 0.0, pitch_scale: float = 1.0, energy_shift: float = 0.0,
+               voice: str = "ljspeech"):
     text = (text or "").strip()
     if not text:
         raise gr.Error("Type a sentence first.")
@@ -42,7 +59,7 @@ def synthesize(text: str, steps: int, guidance: float, temperature: float, speed
         raise gr.Error("Keep it under 600 characters — this Space runs on a small CPU.")
     t0 = time.time()
     try:
-        wav = tts.say(text, steps=int(steps), guidance=float(guidance), temperature=float(temperature), speed=float(speed),
+        wav = tts.say(text, speaker=(voice or "ljspeech") if VOICES else 0, steps=int(steps), guidance=float(guidance), temperature=float(temperature), speed=float(speed),
                       sway=float(sway), midpoint=bool(midpoint), seed=int(seed) if seed >= 0 else None,
                       pitch_shift=float(pitch_shift), pitch_scale=float(pitch_scale), energy_shift=float(energy_shift))
     except SSMLError as e:
@@ -56,7 +73,8 @@ def synthesize(text: str, steps: int, guidance: float, temperature: float, speed
     else:
         phones = "".join(tts.phonemize(text))
     device = "GPU" if mx.default_device().type == mx.DeviceType.gpu else "CPU"
-    info = f"{secs:.2f} s of audio in {dt:.1f} s on {device} (RTF {dt / secs:.2f}) · {int(steps)} steps, guidance {guidance:g}, seed {int(seed)}"
+    who = f"{voice} · " if VOICES else ""
+    info = f"{who}{secs:.2f} s of audio in {dt:.1f} s on {device} (RTF {dt / secs:.2f}) · {int(steps)} steps, guidance {guidance:g}, seed {int(seed)}"
     return (SAMPLE_RATE, pcm), phones, info
 
 
@@ -65,9 +83,10 @@ with gr.Blocks(title="Vovo — text to speech") as demo:
         f"""
 # Vovo — a from-scratch text-to-speech model
 
-Vovo is a 21 M-parameter English voice written in **Swift with hand-written Metal kernels** — its own tensor engine,
-autograd, optimizer and trainer — trained on LJSpeech on an M2 Max. It predicts pitch and energy per sound, so you can
-steer the delivery with the sliders **or with SSML** (try the last three examples). This Space runs the
+Vovo is a 21 M-parameter English text-to-speech model written in **Swift with hand-written Metal kernels** — its own
+tensor engine, autograd, optimizer and trainer — trained on a laptop in about three hours. It carries **110 voices** and
+predicts pitch and energy per sound, so you can steer the delivery with the sliders **or with SSML** (try the last three
+examples). This Space runs the
 Python/MLX port ([`vovo-mlx`](https://github.com/franckverrot/vovo-mlx) v{__version__}) on a CPU, so expect a few
 seconds per sentence; on Apple silicon it is ~20× faster than real time.
 Weights: [`{MODEL_REPO}`](https://huggingface.co/{MODEL_REPO}) · MIT.
@@ -75,6 +94,9 @@ Weights: [`{MODEL_REPO}`](https://huggingface.co/{MODEL_REPO}) · MIT.
     )
     with gr.Row():
         with gr.Column(scale=3):
+            voice = gr.Dropdown(VOICES, value="ljspeech", label="Voice",
+                                info=f"{len(VOICES)} voices — the original plus VCTK's speakers, labelled by pitch",
+                                visible=bool(VOICES), filterable=True)
             text = gr.Textbox(label="Text", value=EXAMPLES[0][0], lines=3, max_lines=6)
             with gr.Row():
                 steps = gr.Slider(2, 32, value=16, step=2, label="ODE steps", info="fewer = faster, blurrier")
@@ -96,16 +118,20 @@ Weights: [`{MODEL_REPO}`](https://huggingface.co/{MODEL_REPO}) · MIT.
             audio = gr.Audio(label="Output (24 kHz)", type="numpy", autoplay=True)
             phones = gr.Textbox(label="Phones the model saw", interactive=False)
             info = gr.Markdown()
-    inputs = [text, steps, guidance, temperature, speed, seed, sway, midpoint, pitch_shift, pitch_scale, energy_shift]
+    inputs = [text, steps, guidance, temperature, speed, seed, sway, midpoint, pitch_shift, pitch_scale, energy_shift, voice]
     outputs = [audio, phones, info]
     button.click(synthesize, inputs, outputs, api_name="synthesize")
     text.submit(synthesize, inputs, outputs)
-    gr.Examples(EXAMPLES, inputs=[text], outputs=outputs, fn=lambda t: synthesize(t, 16, 2.0, 0.667, 1.0, 0, 0.0, False, 0.0, 1.0, 0.0), cache_examples=False)
+    gr.Examples(EXAMPLES, inputs=[text], outputs=outputs, fn=lambda t: synthesize(t, 16, 2.0, 0.667, 1.0, 0, 0.0, False, 0.0, 1.0, 0.0, "ljspeech"), cache_examples=False)
     gr.Markdown(
         """
 **Knobs.** *Steps*: Euler ODE steps of the flow-matching decoder. *Guidance*: classifier-free guidance — 1 is off,
 2 is the default trade-off, above 3 gets bright and hissy. *Temperature*: scale of the starting noise (lower = steadier,
 flatter). *Speed*: > 1 talks faster. Same seed + same settings = same audio.
+
+**Voices.** 110 of them: `ljspeech` is the original (24 h of one audiobook reader), the rest come from VCTK and are
+labelled with their pitch so you can find a register. A single-voice checkpoint scores better on word error rate —
+21 M parameters shared across 110 voices leave less for any one of them — so this Space trades accuracy for choice.
 
 **Prosody.** *Pitch* shifts the whole utterance in semitones. *Range* scales the pitch contour about its own mean —
 0.3 is a monotone, 1.8 is theatrical. *Effort* is vocal effort in dB, which is not the same as volume: the voice
