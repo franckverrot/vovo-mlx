@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import math
 import time
 
 from . import SAMPLE_RATE, VovoTTS, hub
@@ -32,7 +33,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--pitch-shift", type=float, default=0.0, help="semitones (variance-adaptor models)")
     s.add_argument("--pitch-scale", type=float, default=1.0, help="contour variance about the utterance mean")
     s.add_argument("--energy-shift", type=float, default=0.0, help="dB")
+    s.add_argument("--speaker", default="0", help="Voice: an id or a name, e.g. --speaker p226 (multi-voice models).")
     s.add_argument("--play", action="store_true", help="Play with afplay when done.")
+
+    v = sub.add_parser("voices", help="List the voices a checkpoint carries.")
+    v.add_argument("--repo", default=hub.DEFAULT_REPO)
 
     g = sub.add_parser("phones", help="Show normalization and phonemization of text.")
     g.add_argument("text")
@@ -61,10 +66,25 @@ def main(argv: list[str] | None = None) -> int:
         print("phones:    ", "".join(toks))
         return 0
 
+    if args.command == "voices":
+        tts = VovoTTS.from_pretrained(args.repo)
+        names = tts.voices
+        if not names:
+            print(f"{tts.config.nSpeakers} speaker(s), no names recorded — use ids 0…{tts.config.nSpeakers - 1}")
+            return 0
+        print(f"{len(names)} voices:")
+        for i, n in enumerate(names):
+            hz = ""
+            if tts.config.f0Mean and i < len(tts.config.f0Mean):
+                hz = f"  ~{math.exp(tts.config.f0Mean[i]):.0f} Hz"
+            print(f"  {i:3d}  {n}{hz}")
+        return 0
+
     t0 = time.time()
     tts = VovoTTS.from_pretrained(args.repo, model_file=args.model_file, vocoder_file=args.vocoder_file)
     t1 = time.time()
-    wav = tts.say(args.text, steps=args.steps, guidance=args.guidance, temperature=args.temperature,
+    speaker: int | str = int(args.speaker) if args.speaker.lstrip("-").isdigit() else args.speaker
+    wav = tts.say(args.text, speaker=speaker, steps=args.steps, guidance=args.guidance, temperature=args.temperature,
                   speed=args.speed, sway=args.sway, midpoint=args.midpoint, seed=args.seed,
                   pitch_shift=args.pitch_shift, pitch_scale=args.pitch_scale, energy_shift=args.energy_shift)
     t2 = time.time()

@@ -27,6 +27,33 @@ pytest
 
 The weights are downloaded from the Hub on first use and cached by `huggingface_hub` (~135 MB).
 
+## Models
+
+Two checkpoints live in the same Hub repo. They are the same architecture and the same size; they differ in
+what they were trained on, and one is not simply better than the other.
+
+| | **Vovo2-21M** (default) | **Vovo1.5-21M** |
+| --- | --- | --- |
+| voices | **110** — `ljspeech` plus 109 from VCTK | 1 |
+| best for | picking a voice, accents, range | the cleanest single voice |
+| word error rate | 10.0 % | **3.7 %** |
+| pitch error | 107 cents | **74 cents** |
+| prosody controls | yes | yes |
+| download | 137 MB (model 83 MB + vocoder 54 MB) | same |
+
+```python
+tts = VovoTTS.from_pretrained()                                          # Vovo2, 110 voices
+tts = VovoTTS.from_pretrained(revision="vovo1.5-21m")                    # the single voice
+```
+
+```
+vovo-mlx voices                                    # list them, with each voice's pitch
+vovo-mlx say "Hello." --speaker p226 -o p226.wav   # by name, or --speaker 2 by id
+```
+
+Vovo2's word error rate is genuinely worse, and the reason is interesting: 21 M parameters shared across
+110 voices leave less for any one of them. If you want one voice and nothing else, take 1.5.
+
 ## Use
 
 ```
@@ -56,11 +83,13 @@ write_wav("hello.wav", wav, SAMPLE_RATE)
 
 ## Sampler knobs
 
-`tts.say(text, steps=16, guidance=2.0, temperature=0.667, speed=1.0, sway=0.0, midpoint=False, seed=None, pitch_shift=0.0, pitch_scale=1.0, energy_shift=0.0)`
+`tts.say(text, speaker=0, steps=16, guidance=2.0, temperature=0.667, speed=1.0, sway=0.0, midpoint=False,
+seed=None, pitch_shift=0.0, pitch_scale=1.0, energy_shift=0.0)`
 
 
 | argument      | what it does                                                                                          |
 | ------------- | ----------------------------------------------------------------------------------------------------- |
+| `speaker`     | voice id or name (`2`, `"p226"`); `tts.voices` lists them, single-voice models ignore it |
 | `steps`       | ODE steps (16 is the default; 8 with `sway=-1, midpoint=True` is faster and close)                    |
 | `guidance`    | classifier-free guidance scale; 1 = off, 2 = default (crisper, slightly brighter), 3 = brighter still |
 | `temperature` | scale of the starting noise; lower = steadier, flatter                                                |
@@ -116,6 +145,7 @@ ignored (`<break>`, `<sub>` and `rate` still work). Check with `tts.config.varia
 ## Examples
 
 - [examples/say.py](examples/say.py): two lines, text to WAV
+- [examples/voices.py](examples/voices.py): list the 110 voices, render the ones you name
 - [examples/prosody.py](examples/prosody.py): every scalar knob, one at a time — the same sentence higher,
   lower, flatter, livelier, louder, softer, faster, slower, from a fixed seed so only the knob differs
 - [examples/ssml.py](examples/ssml.py): markup that steers prosody per word, and how to *inspect the plan*
@@ -141,12 +171,34 @@ local export with `VOVO_WEIGHTS=/path/to/dir python examples/prosody.py`.
 | `vocoder.safetensors` | Vocos mel-24kHz, PyTorch key layout (also loadable by the original `vocos` package) |
 
 
-A local directory with the same two files works too: `VovoTTS.from_pretrained("/path/to/dir")`.  
-Trained on [LJSpeech](https://keithito.com/LJ-Speech-Dataset/) (public domain, one female speaker, ~24 h).
+A local directory with the same two files works too: `VovoTTS.from_pretrained("/path/to/dir")`.
+
+Pick a version with `revision=`: `vovo2-21m` (default, 110 voices), `vovo1.5-21m` (one voice, cleanest),
+`vovo1-20m` (the first release, no prosody controls).
+
+Trained on [LJSpeech](https://keithito.com/LJ-Speech-Dataset/) (public domain, one female speaker, ~24 h)
+and [VCTK](https://datashare.ed.ac.uk/handle/10283/3443) (CC-BY-4.0, 109 speakers, ~41 h).
+
+## How it was trained
+
+Not in one go, and no longer in thirteen minutes — that figure belongs to the first release and has been
+quoted at us ever since. Each version starts from the previous one's weights, so the cost accumulates:
+
+| | what changed | steps | time |
+| --- | --- | --- | --- |
+| | one voice, long run | 30,000 | 63 min |
+| | a discriminator on the decoder, for sharper detail | 4,000 | 18 min |
+| | 109 more voices added to the mix | 30,000 | 60 min |
+| **Vovo2-21M** | the original voice weighted back up | 8,000 | 37 min |
+| | | **72,000** | **≈ 3 h** |
+
+Three hours on one laptop, and the extra voices are what bought the biggest single improvement in the
+model's pitch: the error fell by a third once it had heard 109 other people speak, which no amount of
+further training on one voice had managed. Data, not steps.
 
 ## Limitations
 
-Currently single voice, English only, and no streaming support just yet.  Out-of-vocabulary words are spelled by rules, there's no neural G2P.  The voice is intelligible (2 % word error rate on Vovo's test set with Apple's ASR) but far from being studio-clean: I let it train for 13 minutes.
+English only, and no streaming support just yet.  Out-of-vocabulary words are spelled by rules, there's no neural G2P, so unusual names come out odd.  Intelligible but not studio-clean: 10 % word error rate for Vovo2 on my test set with Apple's ASR, 3.7 % for the single-voice Vovo1.5 — the 110 voices cost real accuracy, and three hours of training on a laptop is three hours of training on a laptop.  Pitch is predicted from the text alone, so it guesses a reading; use the prosody controls or SSML when it guesses wrong.
 
 ## License
 

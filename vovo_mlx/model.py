@@ -264,6 +264,9 @@ class VovoModel(nn.Module):
         """Phone ids → log-mel. `guidance` is classifier-free guidance (1 = off); `speed` > 1 talks faster."""
         cfg = self.cfg
         ph = mx.array(phones, dtype=mx.int32)[None]
+        if not 0 <= speaker < cfg.nSpeakers:
+            raise ValueError(f"speaker {speaker} is out of range: this model has {cfg.nSpeakers} "
+                             f"speaker(s), ids 0…{cfg.nSpeakers - 1}")
         spk = self.spkEmb(mx.array([speaker], dtype=mx.int32))
         mu, logw, pitch_pred, energy_pred = self.encoder(ph, spk)
         pitch_out, energy_out = mx.array([]), mx.array([])

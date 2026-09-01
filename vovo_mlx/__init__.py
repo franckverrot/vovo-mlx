@@ -16,7 +16,7 @@ from .model import PhoneControl, Synthesis, VovoModel, load_checkpoint, plan_ssm
 from .text import G2P
 from .vocos import Vocos, load_vocos
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 SAMPLE_RATE = 24000
 
 
@@ -40,34 +40,57 @@ class VovoTTS:
     def config(self) -> ModelConfig:
         return self.model.cfg
 
+    @property
+    def voices(self) -> list[str]:
+        """Names of the voices this checkpoint carries, in speaker-id order. Empty on single-voice models
+        and on checkpoints published before names were recorded."""
+        return list(self.model.cfg.speakerNames)
+
+    def speaker_id(self, speaker: int | str) -> int:
+        """Accepts an id or a voice name ('p226'). Raises rather than quietly rendering the wrong voice."""
+        cfg = self.model.cfg
+        if isinstance(speaker, int):
+            if not 0 <= speaker < cfg.nSpeakers:
+                raise ValueError(f"speaker {speaker} is out of range: ids 0…{cfg.nSpeakers - 1}")
+            return speaker
+        try:
+            return cfg.speakerNames.index(speaker)
+        except ValueError:
+            if not cfg.speakerNames:
+                raise ValueError(f"this checkpoint has no voice names — use an id (0…{cfg.nSpeakers - 1})") from None
+            raise ValueError(f"no voice named {speaker!r}. Known: {' '.join(cfg.speakerNames)}") from None
+
     def phonemize(self, text: str) -> list[str]:
         """The phone tokens the model will see (normalized text → IPA)."""
         return self.g2p.phonemize(text)
 
-    def synthesize(self, text: str, **kwargs) -> Synthesis:
+    def synthesize(self, text: str, *, speaker: int | str = 0, **kwargs) -> Synthesis:
         """Text → log-mel. SSML markup (`<speak>`, `<prosody>`, `<emphasis>`, `<break>`) is detected and
         parsed automatically; see `VovoModel.synthesize` for the sampler arguments."""
         from .text import ssml as ssml_mod
 
+        sid = self.speaker_id(speaker)
         if ssml_mod.looks_like_markup(text):
             phones, control, _ = plan_ssml(text, self.g2p)
-            return self.model.synthesize(phones, control=control, **kwargs)
-        return self.model.synthesize(self.g2p.encode(text), **kwargs)
+            return self.model.synthesize(phones, speaker=sid, control=control, **kwargs)
+        return self.model.synthesize(self.g2p.encode(text), speaker=sid, **kwargs)
 
     def vocode(self, log_mel: mx.array) -> np.ndarray:
         wav = self.vocoder(log_mel)
         mx.eval(wav)
         return np.array(wav, dtype=np.float32)
 
-    def say(self, text: str, *, steps: int = 16, guidance: float = 2.0, temperature: float = 0.667,
-            speed: float = 1.0, sway: float = 0.0, midpoint: bool = False, seed: int | None = None,
-            pitch_shift: float = 0.0, pitch_scale: float = 1.0, energy_shift: float = 0.0) -> np.ndarray:
+    def say(self, text: str, *, speaker: int | str = 0, steps: int = 16, guidance: float = 2.0,
+            temperature: float = 0.667, speed: float = 1.0, sway: float = 0.0, midpoint: bool = False,
+            seed: int | None = None, pitch_shift: float = 0.0, pitch_scale: float = 1.0,
+            energy_shift: float = 0.0) -> np.ndarray:
         """Text → float32 waveform at 24 kHz. With a variance-adaptor model, `pitch_shift` (semitones),
         `pitch_scale` (contour variance) and `energy_shift` (dB) reshape the prosody; SSML markup in `text`
         (`<prosody>`, `<emphasis>`, `<break>`) steers it per span and composes with these knobs."""
         if seed is not None:
             mx.random.seed(seed)
-        s = self.synthesize(text, steps=steps, guidance=guidance, temperature=temperature, speed=speed, sway=sway, midpoint=midpoint,
+        s = self.synthesize(text, speaker=speaker, steps=steps, guidance=guidance, temperature=temperature, speed=speed,
+                            sway=sway, midpoint=midpoint,
                             pitch_shift=pitch_shift, pitch_scale=pitch_scale, energy_shift=energy_shift)
         return self.vocode(s.mel)
 

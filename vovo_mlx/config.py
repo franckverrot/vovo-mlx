@@ -22,6 +22,7 @@ class ModelConfig:
     decHeads: int = 6
     nSpeakers: int = 1
     spkDim: int = 64
+    speakerNames: list[str] = field(default_factory=list)
     decDownFrom: int = 0
     decDownTo: int = 0
     varianceAdaptor: bool = False
