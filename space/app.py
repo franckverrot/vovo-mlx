@@ -9,7 +9,9 @@ import gradio as gr
 import mlx.core as mx
 import numpy as np
 
-from vovo_mlx import SAMPLE_RATE, VovoTTS, __version__
+from vovo_mlx import SAMPLE_RATE, VovoTTS, plan_ssml, __version__
+from vovo_mlx.text.phones import decode as decode_phones
+from vovo_mlx.text.ssml import SSMLError, looks_like_markup
 
 MODEL_REPO = "franckverrot/vovo"
 tts = VovoTTS.from_pretrained(MODEL_REPO)
@@ -25,22 +27,34 @@ EXAMPLES = [
     ["Dr. Smith paid $12.50 on the 3rd of May, 1999, at 4:05."],
     ["Vovo is a text-to-speech model written in Swift, with hand-written Metal kernels, trained in thirteen minutes."],
     ["It's 7:30; she'll arrive at 10:00, maybe 10:15, with 1,250 acres of paperwork."],
+    ['<speak>I said <emphasis level="strong">red</emphasis>,<break time="700ms"/>not <prosody pitch="+4st">blue</prosody>.</speak>'],
+    ['<speak><prosody range="0.3">This part is monotone.</prosody> <prosody range="1.8">This part is not!</prosody></speak>'],
+    ['<speak>The build passed <prosody pitch="-2st" volume="-4dB" rate="1.15">(finally)</prosody> and we shipped.</speak>'],
 ]
 
 
-def synthesize(text: str, steps: int, guidance: float, temperature: float, speed: float, seed: int, sway: float, midpoint: bool):
+def synthesize(text: str, steps: int, guidance: float, temperature: float, speed: float, seed: int, sway: float,
+               midpoint: bool, pitch_shift: float = 0.0, pitch_scale: float = 1.0, energy_shift: float = 0.0):
     text = (text or "").strip()
     if not text:
         raise gr.Error("Type a sentence first.")
     if len(text) > 600:
         raise gr.Error("Keep it under 600 characters — this Space runs on a small CPU.")
     t0 = time.time()
-    wav = tts.say(text, steps=int(steps), guidance=float(guidance), temperature=float(temperature), speed=float(speed),
-                  sway=float(sway), midpoint=bool(midpoint), seed=int(seed) if seed >= 0 else None)
+    try:
+        wav = tts.say(text, steps=int(steps), guidance=float(guidance), temperature=float(temperature), speed=float(speed),
+                      sway=float(sway), midpoint=bool(midpoint), seed=int(seed) if seed >= 0 else None,
+                      pitch_shift=float(pitch_shift), pitch_scale=float(pitch_scale), energy_shift=float(energy_shift))
+    except SSMLError as e:
+        raise gr.Error(f"SSML: {e}")
     dt = time.time() - t0
     secs = len(wav) / SAMPLE_RATE
     pcm = (np.clip(wav, -1, 1) * 32767).astype(np.int16)
-    phones = "".join(tts.phonemize(text))
+    if looks_like_markup(text):
+        ids, _, spans = plan_ssml(text, tts.g2p)
+        phones = decode_phones(ids) + f"   ({len(spans)} SSML spans)"
+    else:
+        phones = "".join(tts.phonemize(text))
     device = "GPU" if mx.default_device().type == mx.DeviceType.gpu else "CPU"
     info = f"{secs:.2f} s of audio in {dt:.1f} s on {device} (RTF {dt / secs:.2f}) · {int(steps)} steps, guidance {guidance:g}, seed {int(seed)}"
     return (SAMPLE_RATE, pcm), phones, info
@@ -51,8 +65,9 @@ with gr.Blocks(title="Vovo — text to speech") as demo:
         f"""
 # Vovo — a from-scratch text-to-speech model
 
-Vovo is a 20 M-parameter English voice written in **Swift with hand-written Metal kernels** — its own tensor engine,
-autograd, optimizer and trainer — and trained on LJSpeech in about 13 minutes on an M2 Max. This Space runs the
+Vovo is a 21 M-parameter English voice written in **Swift with hand-written Metal kernels** — its own tensor engine,
+autograd, optimizer and trainer — trained on LJSpeech on an M2 Max. It predicts pitch and energy per sound, so you can
+steer the delivery with the sliders **or with SSML** (try the last three examples). This Space runs the
 Python/MLX port ([`vovo-mlx`](https://github.com/franckverrot/vovo-mlx) v{__version__}) on a CPU, so expect a few
 seconds per sentence; on Apple silicon it is ~20× faster than real time.
 Weights: [`{MODEL_REPO}`](https://huggingface.co/{MODEL_REPO}) · MIT.
@@ -67,6 +82,10 @@ Weights: [`{MODEL_REPO}`](https://huggingface.co/{MODEL_REPO}) · MIT.
             with gr.Row():
                 temperature = gr.Slider(0.2, 1.0, value=0.667, step=0.05, label="Temperature")
                 speed = gr.Slider(0.7, 1.5, value=1.0, step=0.05, label="Speed")
+            with gr.Row():
+                pitch_shift = gr.Slider(-12, 12, value=0, step=0.5, label="Pitch (semitones)", info="whole utterance")
+                pitch_scale = gr.Slider(0.0, 2.0, value=1.0, step=0.1, label="Range", info="< 1 flatter, > 1 more animated")
+                energy_shift = gr.Slider(-12, 12, value=0, step=1, label="Effort (dB)", info="the voice pushes or eases")
             with gr.Accordion("More", open=False):
                 with gr.Row():
                     seed = gr.Number(value=0, precision=0, label="Seed (−1 = random)")
@@ -77,16 +96,24 @@ Weights: [`{MODEL_REPO}`](https://huggingface.co/{MODEL_REPO}) · MIT.
             audio = gr.Audio(label="Output (24 kHz)", type="numpy", autoplay=True)
             phones = gr.Textbox(label="Phones the model saw", interactive=False)
             info = gr.Markdown()
-    inputs = [text, steps, guidance, temperature, speed, seed, sway, midpoint]
+    inputs = [text, steps, guidance, temperature, speed, seed, sway, midpoint, pitch_shift, pitch_scale, energy_shift]
     outputs = [audio, phones, info]
     button.click(synthesize, inputs, outputs, api_name="synthesize")
     text.submit(synthesize, inputs, outputs)
-    gr.Examples(EXAMPLES, inputs=[text], outputs=outputs, fn=lambda t: synthesize(t, 16, 2.0, 0.667, 1.0, 0, 0.0, False), cache_examples=False)
+    gr.Examples(EXAMPLES, inputs=[text], outputs=outputs, fn=lambda t: synthesize(t, 16, 2.0, 0.667, 1.0, 0, 0.0, False, 0.0, 1.0, 0.0), cache_examples=False)
     gr.Markdown(
         """
 **Knobs.** *Steps*: Euler ODE steps of the flow-matching decoder. *Guidance*: classifier-free guidance — 1 is off,
 2 is the default trade-off, above 3 gets bright and hissy. *Temperature*: scale of the starting noise (lower = steadier,
 flatter). *Speed*: > 1 talks faster. Same seed + same settings = same audio.
+
+**Prosody.** *Pitch* shifts the whole utterance in semitones. *Range* scales the pitch contour about its own mean —
+0.3 is a monotone, 1.8 is theatrical. *Effort* is vocal effort in dB, which is not the same as volume: the voice
+pushes or eases rather than just getting louder.
+
+**SSML.** Paste markup and it is detected automatically: `<prosody pitch|range|rate|volume>`, `<emphasis>`,
+`<break time="700ms"/>`, `<p>`, `<s>`, `<sub alias="…">`. A break is a real pause token with its duration pinned,
+not a guess from punctuation. Tags steer individual words and compose with the sliders above.
 
 **Text.** Numbers, money, times, ordinals and common abbreviations are normalized ("$12.50", "4:05", "3rd", "Dr.");
 words outside the lexicon are spelled by rules, so unusual names may come out odd. English only, one voice.

@@ -8,14 +8,15 @@ sdk_version: 6.26.0
 app_file: app.py
 pinned: false
 license: mit
-short_description: A from-scratch TTS voice (Swift + Metal), served via MLX
+short_description: From-scratch TTS (Swift + Metal), steerable prosody
 models:
 - franckverrot/vovo
 ---
 
 # Vovo
 
-Type a sentence, hear Vovo — a 20 M-parameter English text-to-speech model written from scratch in Swift with
-hand-written Metal kernels and trained in 13 minutes on an M2 Max. This Space runs the Python/MLX port
+Type a sentence, hear Vovo — a 21 M-parameter English text-to-speech model written from scratch in Swift with
+hand-written Metal kernels, trained on an M2 Max. It predicts pitch and energy per sound, so the delivery can be
+steered with sliders or with SSML (`<prosody>`, `<emphasis>`, `<break>`). This Space runs the Python/MLX port
 [`vovo-mlx`](https://github.com/franckverrot/vovo-mlx) on CPU; weights are at
 [`franckverrot/vovo`](https://huggingface.co/franckverrot/vovo).
